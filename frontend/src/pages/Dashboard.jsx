@@ -2,14 +2,30 @@ import { useEffect, useMemo, useState } from 'react';
 import { io } from 'socket.io-client';
 import { useAuth } from '../context/AuthContext';
 import PortCard from '../components/PortCard';
+import api from '../api/axios';
+
+function mergeEvents(current, incoming) {
+  const unique = new Map([...incoming, ...current].map((event) => [event.id, event]));
+  return [...unique.values()]
+    .sort((a, b) => new Date(b.recorded_at) - new Date(a.recorded_at))
+    .slice(0, 30);
+}
 
 export default function Dashboard() {
   const { token, username, logout } = useAuth();
   const [ports, setPorts] = useState([]);
+  const [events, setEvents] = useState([]);
   const [lastUpdate, setLastUpdate] = useState(null);
   const [connError, setConnError] = useState('');
 
   useEffect(() => {
+    let active = true;
+    api.get('/api/switches/events?limit=30')
+      .then(({ data }) => {
+        if (active) setEvents((current) => mergeEvents(current, data.events || []));
+      })
+      .catch(() => {});
+
     const socket = io(process.env.REACT_APP_API_URL || 'http://localhost:5000', {
       auth: { token },
     });
@@ -20,9 +36,15 @@ export default function Dashboard() {
       setPorts(data.ports || []);
       setLastUpdate(data.timestamp);
     });
+    socket.on('events:new', (data) => {
+      setEvents((current) => mergeEvents(current, data.events || []));
+    });
     socket.on('ports:error', (data) => setConnError(data.message));
 
-    return () => socket.disconnect();
+    return () => {
+      active = false;
+      socket.disconnect();
+    };
   }, [token]);
 
   const summary = useMemo(() => {
@@ -63,6 +85,28 @@ export default function Dashboard() {
           <span className="summary-label">OFF</span>
         </div>
       </div>
+
+      <section className="events-panel" aria-label="Log kejadian real-time">
+        <div className="events-header">
+          <h2>Log kejadian</h2>
+          <span>{events.length} terbaru</span>
+        </div>
+        {events.length === 0 ? (
+          <p className="empty-state">Belum ada kejadian yang tercatat.</p>
+        ) : (
+          <ul className="events-list">
+            {events.map((event) => (
+              <li className="event-row" key={event.id}>
+                <span className={`event-indicator event-${event.event_type}`} aria-hidden="true" />
+                <span className="event-message">{event.message}</span>
+                <time dateTime={event.recorded_at}>
+                  {new Date(event.recorded_at).toLocaleString('id-ID')}
+                </time>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
 
       <div className="port-grid">
         {ports.length === 0 ? (

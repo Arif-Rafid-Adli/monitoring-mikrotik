@@ -9,6 +9,9 @@ const pool = mysql.createPool({
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0,
+  // Waktu selalu ditulis/dibaca sebagai UTC agar konsisten di semua container.
+  timezone: 'Z',
+  decimalNumbers: true,
 });
 
 module.exports = pool;

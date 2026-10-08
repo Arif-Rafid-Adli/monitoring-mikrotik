@@ -13,15 +13,14 @@ services:
     volumes:
       - db_data:/var/lib/mysql
       - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
-    ports:
-      - "3306:3306"
     healthcheck:
       test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
       interval: 10s
       timeout: 5s
       retries: 10
     networks:
-      - mikrotik_net
+      mikrotik_net:
+        ipv4_address: 10.10.10.10
 
   backend:
     image: node:20-alpine
@@ -45,6 +44,8 @@ services:
       - MIKROTIK_USER=${MIKROTIK_USER}
       - MIKROTIK_PASSWORD=${MIKROTIK_PASSWORD}
       - POLL_INTERVAL_MS=${POLL_INTERVAL_MS:-5000}
+      - LOG_INTERVAL_MS=${LOG_INTERVAL_MS:-60000}
+      - LOG_RETENTION_DAYS=${LOG_RETENTION_DAYS:-7}
       - CORS_ORIGIN=${CORS_ORIGIN:-http://localhost:3000}
     ports:
       - "5000:5000"
@@ -52,7 +53,8 @@ services:
       mariadb:
         condition: service_healthy
     networks:
-      - mikrotik_net
+      mikrotik_net:
+        ipv4_address: 10.10.10.20
 
   frontend:
     image: node:20-alpine
@@ -73,13 +75,51 @@ services:
     depends_on:
       - backend
     networks:
-      - mikrotik_net
+      mikrotik_net:
+        ipv4_address: 10.10.10.30
 
+  bastion:
+    image: alpine:3.20
+    container_name: mikrotik_bastion
+    working_dir: /app
+    command: sh /bastion/entrypoint.sh
+    volumes:
+      - ./bastion:/bastion:ro
+      - bastion_ssh_host_keys:/etc/ssh
+      - ./backend:/app
+      - backend_node_modules:/app/node_modules:ro
+    environment:
+      - DB_HOST=mariadb
+      - DB_PORT=3306
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_NAME=${DB_NAME}
+      - BASTION_ROOT_PASSWORD=${BASTION_ROOT_PASSWORD:-}
+    ports:
+      - "${BASTION_BIND:-127.0.0.1}:2222:22"
+    depends_on:
+      mariadb:
+        condition: service_healthy
+      backend:
+        condition: service_started
+    networks:
+      mikrotik_net:
+        ipv4_address: 10.10.10.40
+    deploy:
+      resources:
+        limits:
+          cpus: '0.10'
+          memory: 64M  
+      
 volumes:
   db_data:
   backend_node_modules:
   frontend_node_modules:
+  bastion_ssh_host_keys:
 
 networks:
   mikrotik_net:
     driver: bridge
+    ipam:
+      config:
+        - subnet: 10.10.10.0/24

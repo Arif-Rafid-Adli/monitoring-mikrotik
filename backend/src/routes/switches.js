@@ -1,31 +1,51 @@
 const express = require('express');
 const pool = require('../config/db');
 const { requireAuth } = require('../middleware/auth');
-const { getLatestSnapshot } = require('../services/poller');
+const { getLatestSnapshot, getLatestTimestamp } = require('../services/poller');
 
 const router = express.Router();
 router.use(requireAuth);
 
-// GET /api/switches/current -> snapshot port terbaru (real-time, dari memori)
+const clampLimit = (value, def, max) => {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 1) return def;
+  return Math.min(Math.floor(n), max);
+};
+
+// GET /api/switches/current -> snapshot port terbaru (dari memori)
 router.get('/current', (req, res) => {
-  res.json({ ports: getLatestSnapshot() });
+  res.json({ ports: getLatestSnapshot(), timestamp: getLatestTimestamp() });
 });
 
-// GET /api/switches/:id/logs?interface=ether1&limit=100 -> histori log port
+// GET /api/switches/events?limit=50 -> log kejadian terbaru (port ON/OFF, switch unreachable)
+router.get('/events', async (req, res) => {
+  const limit = clampLimit(req.query.limit, 50, 500);
+  try {
+    const [rows] = await pool.query(
+      `SELECT id, interface_name, event_type, message, recorded_at
+       FROM port_events ORDER BY recorded_at DESC, id DESC LIMIT ?`,
+      [limit]
+    );
+    res.json({ events: rows.map((r) => ({ ...r, recorded_at: new Date(r.recorded_at).toISOString() })) });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Gagal mengambil log kejadian' });
+  }
+});
+
+// GET /api/switches/:id/logs?interface=ether1&limit=100 -> histori traffic per port
 router.get('/:id/logs', async (req, res) => {
   const { id } = req.params;
-  const { interface: ifaceName, limit = 100 } = req.query;
+  const limit = clampLimit(req.query.limit, 100, 1000);
 
   const params = [id];
   let query = 'SELECT * FROM port_logs WHERE switch_id = ?';
-
-  if (ifaceName) {
+  if (req.query.interface) {
     query += ' AND interface_name = ?';
-    params.push(ifaceName);
+    params.push(String(req.query.interface));
   }
-
   query += ' ORDER BY recorded_at DESC LIMIT ?';
-  params.push(Number(limit));
+  params.push(limit);
 
   try {
     const [rows] = await pool.query(query, params);

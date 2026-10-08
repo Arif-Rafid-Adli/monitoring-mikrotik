@@ -5,11 +5,14 @@ const pool = require('../config/db');
 
 const router = express.Router();
 
+// Hash palsu: dipakai agar waktu respons sama baik user ada maupun tidak (cegah user enumeration).
+const DUMMY_HASH = bcrypt.hashSync('dummy-password-for-timing', 10);
+
 // POST /api/auth/login
 router.post('/login', async (req, res) => {
   const { username, password } = req.body || {};
 
-  if (!username || !password) {
+  if (typeof username !== 'string' || typeof password !== 'string' || !username || !password) {
     return res.status(400).json({ message: 'Username dan password wajib diisi' });
   }
 
@@ -19,14 +22,10 @@ router.post('/login', async (req, res) => {
       [username]
     );
 
-    if (rows.length === 0) {
-      return res.status(401).json({ message: 'Username atau password salah' });
-    }
-
     const user = rows[0];
-    const match = await bcrypt.compare(password, user.password_hash);
+    const match = await bcrypt.compare(password, user ? user.password_hash : DUMMY_HASH);
 
-    if (!match) {
+    if (!user || !match) {
       return res.status(401).json({ message: 'Username atau password salah' });
     }
 
