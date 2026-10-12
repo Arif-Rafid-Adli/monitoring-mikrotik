@@ -1,6 +1,8 @@
 # version: "3.9"
 
 services:
+
+## 1. DATABASE SERVER (MariaDB)
   mariadb:
     image: mariadb:11
     container_name: mikrotik_db
@@ -22,6 +24,7 @@ services:
       mikrotik_net:
         ipv4_address: 10.10.10.10
 
+## 2. BACKEND API SERVER (Node.js)
   backend:
     image: node:20-alpine
     container_name: mikrotik_backend
@@ -56,6 +59,7 @@ services:
       mikrotik_net:
         ipv4_address: 10.10.10.20
 
+## 3. FRONTEND (React)
   frontend:
     image: node:20-alpine
     container_name: mikrotik_frontend
@@ -78,6 +82,7 @@ services:
       mikrotik_net:
         ipv4_address: 10.10.10.30
 
+## 4. BASTION (Alpine)
   bastion:
     image: alpine:3.20
     container_name: mikrotik_bastion
@@ -109,7 +114,22 @@ services:
       resources:
         limits:
           cpus: '0.10'
-          memory: 64M  
+          memory: 64M
+
+## 5. CLOUDWATCH AGENT (Optional)
+  # cloudwatch-agent:
+  #   image: amazon/cloudwatch-agent:latest
+  #   container_name: mikrotik_cloudwatch_agent
+  #   restart: unless-stopped
+  #   volumes:
+  #     - ./cloudwatch-agent-config.json:/etc/cloudwatch-agent/config.json:ro
+  #   environment:
+  #     - AWS_REGION=${AWS_REGION:-us-east-1}
+  #     - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+  #     - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+  #   networks:
+  #     mikrotik_net:
+  #       ipv4_address:
       
 volumes:
   db_data:
