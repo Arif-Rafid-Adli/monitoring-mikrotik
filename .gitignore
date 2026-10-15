@@ -4,4 +4,5 @@ node_modules/
 *.log
 build/
 ssh_keys
-bastion*
+bastion_key*
+authorized_keys
