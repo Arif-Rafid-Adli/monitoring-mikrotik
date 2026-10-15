@@ -34,10 +34,10 @@ export default function PortCard({ port }) {
           <span className="no-device">Tidak ada</span>
         ) : (
           <ul>
-            {port.devices.map((d) => (
-              <li key={d.mac}>
+            {port.devices.map((d, index) => (
+              <li key={d.mac || `${d.name}-${index}`}>
                 <span className="device-name">{d.name || 'Unknown device'}</span>
-                <span className="device-mac">{d.mac}</span>
+                {d.mac && <span className="device-mac">{d.mac}</span>}
               </li>
             ))}
           </ul>

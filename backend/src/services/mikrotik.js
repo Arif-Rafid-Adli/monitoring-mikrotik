@@ -120,6 +120,22 @@ async function fetchBridgeHosts(conn) {
   }
 }
 
+/** MAC address perangkat tetangga yang mengiklankan diri pada tiap interface. */
+async function fetchNeighborMacs(conn) {
+  try {
+    const rows = await conn.write('/ip/neighbor/print');
+    const map = {};
+    for (const row of rows) {
+      const interfaceName = row.interface || row['interface-name'];
+      const mac = (row['mac-address'] || '').toUpperCase();
+      if (interfaceName && mac && !map[interfaceName]) map[interfaceName] = mac;
+    }
+    return map;
+  } catch (err) {
+    return {};
+  }
+}
+
 /** MAC address -> nama device, dari DHCP lease (host-name, fallback ke comment). */
 async function fetchDhcpLeases(conn) {
   try {
@@ -150,6 +166,7 @@ async function fetchSwitchSnapshot() {
     const interfaces = await fetchInterfaces(conn);
     const poeCapable = await fetchPoeCapablePorts(conn);
     const bridgeHosts = await fetchBridgeHosts(conn);
+    const neighborMacs = await fetchNeighborMacs(conn);
     const dhcpLeases = await fetchDhcpLeases(conn);
 
     const traffic = await fetchTraffic(conn, interfaces.map((i) => i.name));
@@ -168,7 +185,9 @@ async function fetchSwitchSnapshot() {
       poeSupported: poeCapable.has(iface.name),
       txMbps: traffic[iface.name]?.txMbps ?? 0,
       rxMbps: traffic[iface.name]?.rxMbps ?? 0,
-      devices: [...(devicesByInterface[iface.name]?.values() || [])],
+      devices: iface.name === 'ether1'
+        ? [{ name: 'Source Internet', mac: neighborMacs[iface.name] || null }]
+        : [...(devicesByInterface[iface.name]?.values() || [])],
     }));
   } catch (err) {
     // Paksa koneksi baru pada polling berikutnya.

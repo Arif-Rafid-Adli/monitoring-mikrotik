@@ -19,13 +19,27 @@ router.get('/current', (req, res) => {
 
 // GET /api/switches/events?limit=50 -> log kejadian terbaru (port ON/OFF, switch unreachable)
 router.get('/events', async (req, res) => {
-  const limit = clampLimit(req.query.limit, 50, 500);
+  const params = [];
+  let query = `SELECT id, interface_name, event_type, message, recorded_at
+               FROM port_events`;
+
+  if (req.query.from || req.query.to) {
+    const from = new Date(req.query.from);
+    const to = new Date(req.query.to);
+    if (!req.query.from || !req.query.to || Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) || from >= to) {
+      return res.status(400).json({ message: 'Rentang tanggal tidak valid' });
+    }
+    query += ' WHERE recorded_at >= ? AND recorded_at < ?';
+    params.push(from, to);
+  } else {
+    params.push(clampLimit(req.query.limit, 50, 500));
+  }
+
+  query += ' ORDER BY recorded_at DESC, id DESC';
+  if (!req.query.from && !req.query.to) query += ' LIMIT ?';
+
   try {
-    const [rows] = await pool.query(
-      `SELECT id, interface_name, event_type, message, recorded_at
-       FROM port_events ORDER BY recorded_at DESC, id DESC LIMIT ?`,
-      [limit]
-    );
+    const [rows] = await pool.query(query, params);
     res.json({ events: rows.map((r) => ({ ...r, recorded_at: new Date(r.recorded_at).toISOString() })) });
   } catch (err) {
     console.error(err);
