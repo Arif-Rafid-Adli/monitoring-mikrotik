@@ -1,0 +1,9 @@
+.git
+.env*
+**/.env*
+**/node_modules
+frontend/build
+bastion/ssh_keys
+bastion_key*
+*.pem
+*.log

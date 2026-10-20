@@ -93,6 +93,37 @@ body {
   margin-bottom: 16px;
 }
 
+.health-panel {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.health-status {
+  min-width: 0;
+  padding: 12px 14px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.health-status-heading { display: flex; align-items: center; gap: 8px; }
+.health-status-heading strong { margin-left: auto; font-size: 12px; }
+.health-label { font-size: 13px; font-weight: 600; }
+.health-status p { color: var(--muted); font-size: 11px; margin: 7px 0 0 16px; }
+.health-indicator { width: 8px; height: 8px; flex: 0 0 8px; border-radius: 50%; background: var(--muted); }
+.health-connected .health-indicator,
+.health-online .health-indicator,
+.health-fresh .health-indicator { background: var(--up); }
+.health-connected strong,
+.health-online strong,
+.health-fresh strong { color: var(--up); }
+.health-disconnected .health-indicator,
+.health-offline .health-indicator,
+.health-stale .health-indicator { background: var(--down); }
+.health-disconnected strong,
+.health-offline strong,
+.health-stale strong { color: var(--down); }
+
 .summary-bar { display: flex; gap: 16px; margin-bottom: 24px; }
 .summary-item {
   background: var(--panel);
@@ -234,3 +265,14 @@ body {
 .device-name { color: var(--text); }
 .device-mac { color: var(--muted); font-family: monospace; }
 .no-device { color: var(--muted); font-size: 12px; }
+
+@media (max-width: 700px) {
+  .dashboard { padding: 20px 16px 36px; }
+  .health-panel { grid-template-columns: 1fr; }
+  .dashboard-header { gap: 16px; }
+}
+
+@media (max-width: 420px) {
+  .dashboard-header { flex-direction: column; }
+  .header-right { width: 100%; justify-content: space-between; }
+}

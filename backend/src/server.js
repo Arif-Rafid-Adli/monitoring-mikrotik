@@ -43,6 +43,11 @@ const corsOrigin = origins.length ? origins : true;
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: corsOrigin, methods: ['GET', 'POST'] } });
+const trustProxyHops = Number(process.env.TRUST_PROXY || 0);
+if (!Number.isInteger(trustProxyHops) || trustProxyHops < 0) {
+  throw new Error('TRUST_PROXY harus berupa bilangan bulat nol atau lebih');
+}
+app.set('trust proxy', trustProxyHops);
 
 app.use(helmet());
 app.use(cors({ origin: corsOrigin }));

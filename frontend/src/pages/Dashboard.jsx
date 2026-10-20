@@ -23,7 +23,12 @@ export default function Dashboard() {
   const [ports, setPorts] = useState([]);
   const [events, setEvents] = useState([]);
   const [lastUpdate, setLastUpdate] = useState(null);
-  const [connError, setConnError] = useState('');
+  const [staleAfterMs, setStaleAfterMs] = useState(30000);
+  const [now, setNow] = useState(Date.now());
+  const [socketStatus, setSocketStatus] = useState('connecting');
+  const [switchStatus, setSwitchStatus] = useState('unknown');
+  const [socketError, setSocketError] = useState('');
+  const [switchError, setSwitchError] = useState('');
   const [isEventsOpen, setIsEventsOpen] = useState(false);
   const [selectedDate, setSelectedDate] = useState('');
   const [dayEvents, setDayEvents] = useState([]);
@@ -38,26 +43,44 @@ export default function Dashboard() {
       })
       .catch(() => {});
 
-    const socket = io(process.env.REACT_APP_API_URL || 'http://localhost:5000', {
+    const socket = io(process.env.REACT_APP_API_URL || window.location.origin, {
       auth: { token },
     });
 
-    socket.on('connect_error', () => setConnError('Gagal terhubung ke server real-time'));
+    socket.on('connect', () => {
+      setSocketStatus('connected');
+      setSocketError('');
+    });
+    socket.on('disconnect', () => setSocketStatus('disconnected'));
+    socket.on('connect_error', () => {
+      setSocketStatus('disconnected');
+      setSocketError('Gagal terhubung ke server real-time');
+    });
     socket.on('ports:update', (data) => {
-      setConnError('');
+      setSwitchStatus(data.switchReachable === false ? 'offline' : data.switchReachable === true ? 'online' : 'unknown');
+      setSwitchError('');
       setPorts(data.ports || []);
       setLastUpdate(data.timestamp);
+      if (data.staleAfterMs) setStaleAfterMs(data.staleAfterMs);
     });
     socket.on('events:new', (data) => {
       setEvents((current) => mergeEvents(current, data.events || []));
     });
-    socket.on('ports:error', (data) => setConnError(data.message));
+    socket.on('ports:error', (data) => {
+      setSwitchStatus('offline');
+      setSwitchError(data.message);
+    });
 
     return () => {
       active = false;
       socket.disconnect();
     };
   }, [token]);
+
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     if (!isEventsOpen || !selectedDate) return undefined;
@@ -95,16 +118,27 @@ export default function Dashboard() {
     return { total: ports.length, up, down: ports.length - up };
   }, [ports]);
 
+  const dataAgeMs = lastUpdate ? Math.max(0, now - new Date(lastUpdate).getTime()) : null;
+  const dataIsStale = dataAgeMs !== null && dataAgeMs > staleAfterMs;
+  const dataStatus = dataAgeMs === null ? 'waiting' : dataIsStale ? 'stale' : 'fresh';
+  const formatAge = (ageMs) => {
+    if (ageMs < 1000) return 'baru saja';
+    const seconds = Math.floor(ageMs / 1000);
+    if (seconds < 60) return `${seconds} detik lalu`;
+    const minutes = Math.floor(seconds / 60);
+    return `${minutes} menit lalu`;
+  };
+
   return (
     <div className="dashboard">
       <header className="dashboard-header">
         <div>
           <h1>Mikrotik Switch Monitor</h1>
-          {lastUpdate && (
-            <p className="last-update">
-              Update terakhir: {new Date(lastUpdate).toLocaleTimeString('id-ID')}
-            </p>
-          )}
+          <p className="last-update">
+            {lastUpdate
+              ? `Update terakhir ${new Date(lastUpdate).toLocaleTimeString('id-ID')} · ${formatAge(dataAgeMs)}`
+              : 'Belum menerima data dari switch'}
+          </p>
         </div>
         <div className="header-right">
           <span className="username-badge">{username}</span>
@@ -112,7 +146,40 @@ export default function Dashboard() {
         </div>
       </header>
 
-      {connError && <div className="conn-error-banner">{connError}</div>}
+      <section className="health-panel" aria-label="Kondisi koneksi dan data">
+        <HealthStatus
+          label="Server real-time"
+          status={socketStatus}
+          detail={
+            socketStatus === 'connected' ? 'Koneksi dashboard aktif'
+              : socketStatus === 'connecting' ? 'Sedang menghubungkan ke backend'
+                : 'Koneksi dashboard terputus'
+          }
+        />
+        <HealthStatus
+          label="Switch MikroTik"
+          status={switchStatus}
+          detail={
+            switchStatus === 'online' ? 'Terhubung dan mengirim data'
+              : switchStatus === 'offline' ? 'Tidak dapat dihubungi'
+                : 'Menunggu hasil pemeriksaan'
+          }
+        />
+        <HealthStatus
+          label="Kesegaran data"
+          status={dataStatus}
+          detail={
+            dataStatus === 'waiting' ? 'Belum ada snapshot'
+              : dataStatus === 'stale' ? `Data terakhir ${formatAge(dataAgeMs)}`
+                : `Data diperbarui ${formatAge(dataAgeMs)}`
+          }
+        />
+      </section>
+      {(socketError || switchError) && (
+        <div className="conn-error-banner" role="status">
+          {socketError || switchError}
+        </div>
+      )}
 
       <div className="summary-bar">
         <div className="summary-item">
@@ -220,6 +287,31 @@ export default function Dashboard() {
           ports.map((port) => <PortCard key={port.interfaceName} port={port} />)
         )}
       </div>
+    </div>
+  );
+}
+
+function HealthStatus({ label, status, detail }) {
+  const statusLabels = {
+    connecting: 'Menghubungkan',
+    connected: 'Terhubung',
+    disconnected: 'Terputus',
+    online: 'Online',
+    offline: 'Offline',
+    unknown: 'Belum diketahui',
+    waiting: 'Menunggu data',
+    fresh: 'Terkini',
+    stale: 'Kedaluwarsa',
+  };
+
+  return (
+    <div className={`health-status health-${status}`}>
+      <div className="health-status-heading">
+        <span className="health-indicator" aria-hidden="true" />
+        <span className="health-label">{label}</span>
+        <strong>{statusLabels[status]}</strong>
+      </div>
+      <p>{detail}</p>
     </div>
   );
 }

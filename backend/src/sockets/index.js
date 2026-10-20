@@ -1,5 +1,10 @@
 const { verifySocketToken } = require('../middleware/auth');
-const { getLatestSnapshot, getLatestTimestamp } = require('../services/poller');
+const {
+  getLatestSnapshot,
+  getLatestTimestamp,
+  getStaleAfterMs,
+  getSwitchReachable,
+} = require('../services/poller');
 
 function initSockets(io) {
   // Semua koneksi socket wajib membawa JWT yang sama dengan login REST.
@@ -20,7 +25,12 @@ function initSockets(io) {
     // Kirim snapshot terakhir agar client tidak menunggu siklus polling berikutnya.
     const ports = getLatestSnapshot();
     if (ports.length) {
-      socket.emit('ports:update', { ports, timestamp: getLatestTimestamp() });
+      socket.emit('ports:update', {
+        ports,
+        timestamp: getLatestTimestamp(),
+        staleAfterMs: getStaleAfterMs(),
+        switchReachable: getSwitchReachable(),
+      });
     }
 
     socket.on('disconnect', () => console.log(`Socket terputus: ${socket.id}`));

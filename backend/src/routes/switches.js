@@ -1,7 +1,12 @@
 const express = require('express');
 const pool = require('../config/db');
 const { requireAuth } = require('../middleware/auth');
-const { getLatestSnapshot, getLatestTimestamp } = require('../services/poller');
+const {
+  getLatestSnapshot,
+  getLatestTimestamp,
+  getStaleAfterMs,
+  getSwitchReachable,
+} = require('../services/poller');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -14,7 +19,12 @@ const clampLimit = (value, def, max) => {
 
 // GET /api/switches/current -> snapshot port terbaru (dari memori)
 router.get('/current', (req, res) => {
-  res.json({ ports: getLatestSnapshot(), timestamp: getLatestTimestamp() });
+  res.json({
+    ports: getLatestSnapshot(),
+    timestamp: getLatestTimestamp(),
+    staleAfterMs: getStaleAfterMs(),
+    switchReachable: getSwitchReachable(),
+  });
 });
 
 // GET /api/switches/events?limit=50 -> log kejadian terbaru (port ON/OFF, switch unreachable)

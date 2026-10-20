@@ -1,17 +1,13 @@
-# version: "3.9"
-
 services:
-
-## 1. DATABASE SERVER (MariaDB)
   mariadb:
     image: mariadb:11
     container_name: mikrotik_db
     restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
-      MYSQL_DATABASE: ${DB_NAME}
-      MYSQL_USER: ${DB_USER}
-      MYSQL_PASSWORD: ${DB_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?Set DB_ROOT_PASSWORD in .env}
+      MYSQL_DATABASE: ${DB_NAME:?Set DB_NAME in .env}
+      MYSQL_USER: ${DB_USER:?Set DB_USER in .env}
+      MYSQL_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env}
     volumes:
       - db_data:/var/lib/mysql
       - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
@@ -21,125 +17,98 @@ services:
       timeout: 5s
       retries: 10
     networks:
-      mikrotik_net:
-        ipv4_address: 10.10.10.10
+      - mikrotik_net
 
-## 2. BACKEND API SERVER (Node.js)
   backend:
-    image: node:20-alpine
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
     container_name: mikrotik_backend
-    working_dir: /app
-    command: sh -c "npm install && node src/server.js"
-    volumes:
-      - ./backend:/app
-      - backend_node_modules:/app/node_modules
+    restart: unless-stopped
     environment:
-      - PORT=5000
-      - DB_HOST=mariadb
-      - DB_PORT=3306
-      - DB_USER=${DB_USER}
-      - DB_PASSWORD=${DB_PASSWORD}
-      - DB_NAME=${DB_NAME}
-      - JWT_SECRET=${JWT_SECRET}
-      - JWT_EXPIRES_IN=${JWT_EXPIRES_IN:-8h}
-      - MIKROTIK_HOST=${MIKROTIK_HOST}
-      - MIKROTIK_API_PORT=${MIKROTIK_API_PORT:-8728}
-      - MIKROTIK_USER=${MIKROTIK_USER}
-      - MIKROTIK_PASSWORD=${MIKROTIK_PASSWORD}
-      - POLL_INTERVAL_MS=${POLL_INTERVAL_MS:-5000}
-      - LOG_INTERVAL_MS=${LOG_INTERVAL_MS:-60000}
-      - LOG_RETENTION_DAYS=${LOG_RETENTION_DAYS:-7}
-      - CORS_ORIGIN=${CORS_ORIGIN:-http://localhost:3000}
-    ports:
-      - "5000:5000"
+      NODE_ENV: production
+      PORT: 5000
+      TRUST_PROXY: ${TRUST_PROXY:-1}
+      DB_HOST: mariadb
+      DB_PORT: 3306
+      DB_USER: ${DB_USER:?Set DB_USER in .env}
+      DB_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env}
+      DB_NAME: ${DB_NAME:?Set DB_NAME in .env}
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-8h}
+      MIKROTIK_HOST: ${MIKROTIK_HOST:?Set MIKROTIK_HOST in .env}
+      MIKROTIK_API_PORT: ${MIKROTIK_API_PORT:-8728}
+      MIKROTIK_USER: ${MIKROTIK_USER:?Set MIKROTIK_USER in .env}
+      MIKROTIK_PASSWORD: ${MIKROTIK_PASSWORD:?Set MIKROTIK_PASSWORD in .env}
+      POLL_INTERVAL_MS: ${POLL_INTERVAL_MS:-5000}
+      LOG_INTERVAL_MS: ${LOG_INTERVAL_MS:-60000}
+      LOG_RETENTION_DAYS: ${LOG_RETENTION_DAYS:-7}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:3000}
     depends_on:
       mariadb:
         condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:5000/api/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
     networks:
-      mikrotik_net:
-        ipv4_address: 10.10.10.20
+      - mikrotik_net
 
-## 3. FRONTEND (React)
   frontend:
-    image: node:20-alpine
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
     container_name: mikrotik_frontend
-    working_dir: /app
-    command: sh -c "npm install && npm start"
-    volumes:
-      - ./frontend:/app
-      - frontend_node_modules:/app/node_modules
-    environment:
-      - HOST=0.0.0.0
-      - PORT=3000
-      - CHOKIDAR_USEPOLLING=true
-      - WDS_SOCKET_PORT=0
-      - REACT_APP_API_URL=${REACT_APP_API_URL:-http://localhost:5000}
+    restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "${APP_BIND:-127.0.0.1}:${APP_PORT:-3000}:80"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
     networks:
-      mikrotik_net:
-        ipv4_address: 10.10.10.30
+      - mikrotik_net
 
-## 4. BASTION (Alpine)
   bastion:
-    image: alpine:3.20
+    build:
+      context: .
+      dockerfile: bastion/Dockerfile
     container_name: mikrotik_bastion
-    working_dir: /app
-    command: sh /bastion/entrypoint.sh
+    restart: unless-stopped
     volumes:
-      - ./bastion:/bastion:ro
+      - ./bastion/authorized_keys:/bastion/authorized_keys:ro
       - bastion_ssh_host_keys:/etc/ssh
-      - ./backend:/app
-      - backend_node_modules:/app/node_modules:ro
     environment:
-      - DB_HOST=mariadb
-      - DB_PORT=3306
-      - DB_USER=${DB_USER}
-      - DB_PASSWORD=${DB_PASSWORD}
-      - DB_NAME=${DB_NAME}
-      - BASTION_ROOT_PASSWORD=${BASTION_ROOT_PASSWORD:-}
+      DB_HOST: mariadb
+      DB_PORT: 3306
+      DB_USER: ${DB_USER:?Set DB_USER in .env}
+      DB_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env}
+      DB_NAME: ${DB_NAME:?Set DB_NAME in .env}
+      BASTION_ROOT_PASSWORD: ${BASTION_ROOT_PASSWORD:-}
     ports:
       - "${BASTION_BIND:-127.0.0.1}:2222:22"
     depends_on:
       mariadb:
         condition: service_healthy
-      backend:
-        condition: service_started
     networks:
-      mikrotik_net:
-        ipv4_address: 10.10.10.40
-    deploy:
-      resources:
-        limits:
-          cpus: '0.10'
-          memory: 64M
+      - mikrotik_net
 
-## 5. CLOUDWATCH AGENT (Optional)
-  # cloudwatch-agent:
-  #   image: amazon/cloudwatch-agent:latest
-  #   container_name: mikrotik_cloudwatch_agent
-  #   restart: unless-stopped
-  #   volumes:
-  #     - ./cloudwatch-agent-config.json:/etc/cloudwatch-agent/config.json:ro
-  #   environment:
-  #     - AWS_REGION=${AWS_REGION:-us-east-1}
-  #     - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
-  #     - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
-  #   networks:
-  #     mikrotik_net:
-  #       ipv4_address:
-      
 volumes:
   db_data:
-  backend_node_modules:
-  frontend_node_modules:
   bastion_ssh_host_keys:
 
 networks:
   mikrotik_net:
     driver: bridge
-    ipam:
-      config:
-        - subnet: 10.10.10.0/24

@@ -1,8 +1,10 @@
 #!/bin/sh
 set -e
 
-echo "[bastion] Menginstall paket (openssh, mariadb-client, bash, shadow, nodejs)..."
-apk add --no-cache openssh-server mariadb-client bash shadow nodejs >/dev/null
+if ! command -v sshd >/dev/null 2>&1; then
+  echo "[bastion] Menginstall paket (openssh, mariadb-client, bash, shadow, nodejs)..."
+  apk add --no-cache openssh-server mariadb-client bash shadow nodejs >/dev/null
+fi
 
 # Login shell root = bash supaya /etc/profile ikut dibaca saat SSH.
 chsh -s /bin/bash root

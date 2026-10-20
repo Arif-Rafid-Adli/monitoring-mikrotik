@@ -17,6 +17,15 @@ function getLatestTimestamp() {
   return latestTimestamp;
 }
 
+function getStaleAfterMs() {
+  const pollMs = Number(process.env.POLL_INTERVAL_MS || 5000);
+  return Math.max(pollMs * 3, 30000);
+}
+
+function getSwitchReachable() {
+  return switchReachable;
+}
+
 /** Simpan event ke DB lalu kembalikan dalam bentuk siap kirim ke frontend. */
 async function recordEvents(switchId, events) {
   if (events.length === 0) return [];
@@ -128,11 +137,21 @@ function startPolling(io, switchId) {
       switchReachable = true;
       events.push(...detectStatusChanges(snapshot));
 
-      io.emit('ports:update', { switchId, timestamp: latestTimestamp, ports: snapshot });
+      io.emit('ports:update', {
+        switchId,
+        timestamp: latestTimestamp,
+        staleAfterMs: getStaleAfterMs(),
+        switchReachable: true,
+        ports: snapshot,
+      });
 
       if (events.length) {
-        const saved = await recordEvents(switchId, events);
-        io.emit('events:new', { events: saved });
+        try {
+          const saved = await recordEvents(switchId, events);
+          io.emit('events:new', { events: saved });
+        } catch (err) {
+          console.error('Gagal mencatat event:', err.message);
+        }
       }
 
       if (Date.now() - lastLogAt >= logMs) {
@@ -169,4 +188,11 @@ function stopPolling() {
   timers = [];
 }
 
-module.exports = { startPolling, stopPolling, getLatestSnapshot, getLatestTimestamp };
+module.exports = {
+  startPolling,
+  stopPolling,
+  getLatestSnapshot,
+  getLatestTimestamp,
+  getStaleAfterMs,
+  getSwitchReachable,
+};

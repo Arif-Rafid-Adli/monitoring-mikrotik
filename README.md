@@ -17,23 +17,23 @@ Dashboard web untuk memantau switch MikroTik secara real-time. Aplikasi menampil
 - Backend: Node.js 20, Express, RouterOS API, Socket.IO.
 - Database: MariaDB 11.
 - Administrasi: container bastion Alpine dengan OpenSSH.
-- Seluruh container dan jaringan didefinisikan di `docker-compose.yml`; backend dan frontend tidak memiliki Dockerfile.
+- Deployment produksi menggunakan Docker Compose, Dockerfile backend/frontend, dan Nginx untuk menyajikan frontend serta meneruskan API dan Socket.IO.
 
 ```text
 mikrotik-monitor/
 ├── .env.example
 ├── docker-compose.yml
+├── backend/
+│   ├── Dockerfile
+│   └── src/
 ├── db/
 │   └── init.sql
-├── backend/
-│   └── src/
-│       ├── config/       # koneksi DB dan pembuatan skema
-│       ├── routes/       # autentikasi dan API switch
-│       ├── services/     # RouterOS API dan polling/log
-│       └── scripts/      # CLI manajemen akun
 ├── frontend/
+│   ├── Dockerfile
+│   ├── nginx.conf
 │   └── src/              # dashboard, halaman login, dan komponen
 └── bastion/
+    ├── Dockerfile
     ├── entrypoint.sh
     └── authorized_keys   # public key admin
 ```
@@ -63,12 +63,14 @@ mikrotik-monitor/
    | `POLL_INTERVAL_MS` | Jeda polling status switch | `5000` |
    | `LOG_INTERVAL_MS` | Jeda penyimpanan snapshot histori | `60000` |
    | `LOG_RETENTION_DAYS` | Lama penyimpanan log sebelum dibersihkan | `7` |
-   | `CORS_ORIGIN` | Origin frontend yang diizinkan; beberapa origin dapat dipisahkan koma | `http://localhost:3000` |
-   | `REACT_APP_API_URL` | URL backend yang diakses browser frontend | `http://localhost:5000` |
+   | `CORS_ORIGIN` | Origin dashboard yang diizinkan; sesuaikan dengan URL browser saat memakai hostname/IP kampus atau HTTPS | `http://localhost:3000` |
+   | `TRUST_PROXY` | Jumlah proxy tepercaya di depan backend; default deployment langsung adalah `1`, naikkan jika ada reverse proxy tambahan | `1` |
+   | `APP_BIND` | Alamat host untuk dashboard; gunakan `127.0.0.1` untuk lokal atau `0.0.0.0` dengan firewall yang membatasi akses | `127.0.0.1` |
+   | `APP_PORT` | Port host untuk dashboard | `3000` |
    | `BASTION_BIND` | Alamat host untuk port SSH bastion | `127.0.0.1` |
    | `BASTION_ROOT_PASSWORD` | Mengaktifkan login password root SSH jika diisi; sebaiknya dikosongkan | kosong |
 
-   Buat nilai `JWT_SECRET` acak, misalnya dengan `openssl rand -hex 32`. Jangan gunakan nilai contoh untuk database, MikroTik, atau JWT.
+   Buat nilai `JWT_SECRET` acak, misalnya dengan `openssl rand -hex 32`. Ganti semua password contoh dengan rahasia yang kuat. Jangan commit `.env`.
 
 4. Aktifkan RouterOS API di perangkat:
 
@@ -78,19 +80,20 @@ mikrotik-monitor/
 
    Buat user khusus dengan hak akses minimum yang diperlukan untuk membaca informasi perangkat. Pastikan port API dapat dijangkau dari jaringan Docker host.
 
-## Menjalankan aplikasi
+## Deployment produksi
 
 ```sh
-docker compose up -d
+docker compose up -d --build
 ```
 
-Pada start pertama, Docker mengunduh image, MariaDB menginisialisasi database, dan container backend/frontend memasang dependency dengan `npm install`. Tunggu sampai proses instalasi selesai.
+Compose membangun backend produksi dan bundle frontend statis yang disajikan oleh Nginx. Nginx meneruskan `/api` dan Socket.IO ke backend; port backend dan MariaDB tidak dipublikasikan langsung ke host. Dependency dipasang saat build image, bukan saat container berjalan.
 
-- Dashboard: `http://localhost:3000`
-- Backend: `http://localhost:5000`
-- Health check backend: `http://localhost:5000/api/health`
+- Dashboard lokal: `http://localhost:<APP_PORT>` (default `http://localhost:3000`)
+- Health check backend: `http://localhost:<APP_PORT>/api/health`
 
-Untuk akses dari komputer lain, buka port aplikasi yang diperlukan pada host dan sesuaikan `REACT_APP_API_URL` serta `CORS_ORIGIN` dengan alamat yang benar-benar digunakan browser. `REACT_APP_API_URL` tidak boleh menunjuk ke `localhost` jika browser berjalan di komputer lain.
+Secara default dashboard hanya menerima koneksi dari komputer host (`APP_BIND=127.0.0.1`). Agar dapat dipakai tim, atur `APP_BIND` ke alamat interface host yang sesuai atau `0.0.0.0`, lalu batasi port `APP_PORT` dengan firewall ke jaringan/VPN kampus yang berwenang. Sesuaikan `CORS_ORIGIN` dengan origin dashboard yang dipakai, misalnya `https://monitoring.example.edu`. Deployment ini menyediakan HTTP; untuk akses melalui jaringan bersama, tempatkan di belakang reverse proxy institusi yang menyediakan HTTPS atau akseskan hanya melalui VPN yang disetujui. Jika ada reverse proxy tambahan di depan Nginx, sesuaikan `TRUST_PROXY` dengan jumlah hop proxy tepercaya. Jangan mengekspos port bastion ke internet.
+
+Dashboard menampilkan status koneksi real-time, keterjangkauan switch MikroTik, serta usia data terakhir. Data ditandai kedaluwarsa jika tidak ada pembaruan selama tiga kali interval polling atau minimal 30 detik. Status data kedaluwarsa tidak menghapus snapshot terakhir; dashboard tetap menampilkannya sebagai data lama.
 
 Perintah Docker yang berguna:
 
@@ -99,10 +102,13 @@ docker compose ps
 docker compose logs -f backend
 docker compose logs -f frontend
 docker compose logs -f mariadb
+docker compose up -d --build
 docker compose down
 ```
 
-`docker compose down` tidak menghapus volume database. Data MariaDB tersimpan di volume `db_data`; jangan menghapus volume tersebut jika ingin mempertahankan data.
+`docker compose down` tidak menghapus volume database. Data MariaDB tersimpan di volume `db_data`; jangan gunakan `docker compose down -v` jika ingin mempertahankan data. Ambil dan uji backup database secara berkala sebelum pembaruan atau pemeliharaan host.
+
+Untuk menjalankan frontend/backend secara lokal selama pengembangan, jalankan backend dengan `npm start` di `backend` dan frontend dengan `REACT_APP_API_URL=http://localhost:5000 npm start` di `frontend`. Compose utama sekarang ditujukan untuk deployment produksi.
 
 ## Membuat akun dashboard
 
@@ -172,8 +178,8 @@ Socket.IO mengirim event `ports:update`, `ports:error`, dan `events:new`. Login 
 - Port `ether1` ditampilkan sebagai sumber internet, dengan MAC address tetangga jika RouterOS melaporkannya.
 - Perangkat harus menyediakan RouterOS API. Perangkat yang berjalan dalam mode SwOS saja, seperti beberapa model CSS, tidak menyediakan API RouterOS yang digunakan aplikasi ini.
 
-## Pengembangan dan produksi
+## Catatan operasional
 
-Compose menjalankan React Create React App development server (`npm start`) dan memasang dependency saat container start. Ini cocok untuk pengembangan dan deployment internal sederhana, bukan konfigurasi produksi yang dioptimalkan. Untuk produksi, buat bundle frontend dengan `npm run build` di direktori `frontend`, sajikan `frontend/build` melalui web server produksi, dan tinjau TLS, firewall, rahasia, serta kebijakan akses sebelum mengekspos layanan ke jaringan.
+Image produksi menggunakan Node.js untuk backend dan Nginx untuk frontend statis. Semua layanan memakai jaringan Docker internal; hanya dashboard dan SSH bastion yang dipublikasikan ke host. Sebelum penggunaan operasional, verifikasi backup/pemulihan, firewall kampus, HTTPS atau VPN, dan pemantauan log container.
 
 Jangan commit `.env`, private key `bastion_key`, atau SSH host private key. Simpan file-file tersebut dengan izin yang sesuai; gunakan `.env.example` hanya sebagai template, bukan konfigurasi operasional.
