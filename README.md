@@ -1,80 +1,179 @@
 # Mikrotik Switch Monitor
 
-Website monitoring real-time untuk switch Mikrotik: nama interface, jumlah port, status port (ON/OFF),
-dukungan PoE, device terhubung (nama + MAC address), serta TX/RX (Mbps).
+Dashboard web untuk memantau switch MikroTik secara real-time. Aplikasi menampilkan status port, dukungan PoE, perangkat yang terhubung, serta lalu lintas TX/RX. Perubahan status port dan kondisi switch juga dicatat sebagai log kejadian.
 
-Stack: React (frontend) · Express + Socket.IO (backend) · MariaDB · Docker Compose.
-**Semua konfigurasi Docker hanya ada di `docker-compose.yml`** (tidak ada Dockerfile di backend/frontend).
+## Fitur
 
-```
+- Memantau interface fisik Ethernet, SFP, dan QSFP melalui RouterOS API.
+- Menampilkan status port ON/OFF, dukungan PoE, serta TX/RX dalam Mbps.
+- Menampilkan MAC address perangkat di port dan nama dari DHCP lease jika tersedia.
+- Mengirim snapshot port dan kejadian ke dashboard secara real-time dengan Socket.IO.
+- Menyimpan histori port, perangkat, dan kejadian di MariaDB; log lama dibersihkan otomatis.
+- Melindungi dashboard dan API dengan login JWT. Akun dibuat oleh admin melalui bastion SSH, bukan dari website.
+
+## Teknologi dan struktur proyek
+
+- Frontend: React 18 (Create React App), Axios, Socket.IO Client.
+- Backend: Node.js 20, Express, RouterOS API, Socket.IO.
+- Database: MariaDB 11.
+- Administrasi: container bastion Alpine dengan OpenSSH.
+- Seluruh container dan jaringan didefinisikan di `docker-compose.yml`; backend dan frontend tidak memiliki Dockerfile.
+
+```text
 mikrotik-monitor/
-├── docker-compose.yml
 ├── .env.example
-├── backend/     # Express, RouterOS API client, skema DB (src/config/schema.js), CLI user
-├── frontend/    # React (CRA) + Socket.IO client
-└── bastion/     # akses SSH super admin (entrypoint.sh, authorized_keys)
+├── docker-compose.yml
+├── db/
+│   └── init.sql
+├── backend/
+│   └── src/
+│       ├── config/       # koneksi DB dan pembuatan skema
+│       ├── routes/       # autentikasi dan API switch
+│       ├── services/     # RouterOS API dan polling/log
+│       └── scripts/      # CLI manajemen akun
+├── frontend/
+│   └── src/              # dashboard, halaman login, dan komponen
+└── bastion/
+    ├── entrypoint.sh
+    └── authorized_keys   # public key admin
 ```
 
-## Menjalankan
+## Persiapan
 
-1. `cp .env.example .env`, lalu isi password DB, `JWT_SECRET` (`openssl rand -hex 32`) dan kredensial Mikrotik.
-2. Di Mikrotik: `/ip service enable api` (disarankan buat user khusus read-only untuk monitoring).
-3. `docker compose up -d`  (start pertama lebih lama karena `npm install` berjalan di dalam container).
-   - Dashboard: `http://<ip-server>:3000` · API: `http://<ip-server>:5000`
-4. Buat user login lewat SSH (langkah berikut).
+1. Siapkan Docker Engine dan Docker Compose.
+2. Salin `.env.example` menjadi `.env`:
 
-## Membuat user login (super admin via SSH)
+   ```powershell
+   Copy-Item .env.example .env
+   ```
 
-Tabel `users` **tidak pernah diisi lewat website**. Super admin masuk ke container `bastion` lewat SSH key:
+3. Isi nilai di `.env`. Ganti semua nilai contoh dan gunakan rahasia yang kuat.
 
+   | Variabel | Keterangan | Default |
+   |---|---|---|
+   | `DB_ROOT_PASSWORD` | Password root MariaDB | wajib diisi |
+   | `DB_NAME` | Nama database aplikasi | wajib diisi |
+   | `DB_USER` | User database aplikasi | wajib diisi |
+   | `DB_PASSWORD` | Password user database | wajib diisi |
+   | `JWT_SECRET` | Secret untuk menandatangani token; buat nilai acak yang panjang | wajib diisi |
+   | `JWT_EXPIRES_IN` | Masa berlaku token JWT | `8h` |
+   | `MIKROTIK_HOST` | IP atau hostname perangkat MikroTik yang dapat dijangkau backend | wajib diisi |
+   | `MIKROTIK_API_PORT` | Port RouterOS API | `8728` |
+   | `MIKROTIK_USER` / `MIKROTIK_PASSWORD` | Akun RouterOS untuk monitoring | wajib diisi |
+   | `POLL_INTERVAL_MS` | Jeda polling status switch | `5000` |
+   | `LOG_INTERVAL_MS` | Jeda penyimpanan snapshot histori | `60000` |
+   | `LOG_RETENTION_DAYS` | Lama penyimpanan log sebelum dibersihkan | `7` |
+   | `CORS_ORIGIN` | Origin frontend yang diizinkan; beberapa origin dapat dipisahkan koma | `http://localhost:3000` |
+   | `REACT_APP_API_URL` | URL backend yang diakses browser frontend | `http://localhost:5000` |
+   | `BASTION_BIND` | Alamat host untuk port SSH bastion | `127.0.0.1` |
+   | `BASTION_ROOT_PASSWORD` | Mengaktifkan login password root SSH jika diisi; sebaiknya dikosongkan | kosong |
+
+   Buat nilai `JWT_SECRET` acak, misalnya dengan `openssl rand -hex 32`. Jangan gunakan nilai contoh untuk database, MikroTik, atau JWT.
+
+4. Aktifkan RouterOS API di perangkat:
+
+   ```routeros
+   /ip service enable api
+   ```
+
+   Buat user khusus dengan hak akses minimum yang diperlukan untuk membaca informasi perangkat. Pastikan port API dapat dijangkau dari jaringan Docker host.
+
+## Menjalankan aplikasi
+
+```sh
+docker compose up -d
 ```
-ssh-keygen -t ed25519 -f bastion_key            # sekali saja, di komputer admin
-# salin isi bastion_key.pub ke bastion/authorized_keys
-docker compose up -d --force-recreate bastion
-ssh -t -p 2222 -i bastion_key root@localhost
+
+Pada start pertama, Docker mengunduh image, MariaDB menginisialisasi database, dan container backend/frontend memasang dependency dengan `npm install`. Tunggu sampai proses instalasi selesai.
+
+- Dashboard: `http://localhost:3000`
+- Backend: `http://localhost:5000`
+- Health check backend: `http://localhost:5000/api/health`
+
+Untuk akses dari komputer lain, buka port aplikasi yang diperlukan pada host dan sesuaikan `REACT_APP_API_URL` serta `CORS_ORIGIN` dengan alamat yang benar-benar digunakan browser. `REACT_APP_API_URL` tidak boleh menunjuk ke `localhost` jika browser berjalan di komputer lain.
+
+Perintah Docker yang berguna:
+
+```sh
+docker compose ps
+docker compose logs -f backend
+docker compose logs -f frontend
+docker compose logs -f mariadb
+docker compose down
 ```
 
-Perintah di dalam bastion (password ditanya lewat prompt tersembunyi, disimpan sebagai hash bcrypt):
+`docker compose down` tidak menghapus volume database. Data MariaDB tersimpan di volume `db_data`; jangan menghapus volume tersebut jika ingin mempertahankan data.
 
-| Perintah | Fungsi |
+## Membuat akun dashboard
+
+Tidak ada akun default dan registrasi tidak tersedia di website. Admin mengelola akun melalui bastion SSH.
+
+1. Buat pasangan kunci SSH di komputer admin (jika belum ada):
+
+   ```sh
+   ssh-keygen -t ed25519 -f bastion_key
+   ```
+
+2. Tambahkan isi `bastion_key.pub` ke `bastion/authorized_keys`, lalu buat ulang container bastion:
+
+   ```sh
+   docker compose up -d --force-recreate bastion
+   ```
+
+3. Hubungkan ke bastion. Di Windows PowerShell atau shell lain:
+
+   ```sh
+   ssh -t -p 2222 -i bastion_key root@localhost
+   ```
+
+   Jika akses SSH diperlukan dari komputer lain di jaringan, ubah `BASTION_BIND` di `.env` dari `127.0.0.1` ke alamat host yang sesuai (misalnya `0.0.0.0`), lalu buat ulang bastion. Batasi akses port SSH menggunakan firewall.
+
+4. Jalankan perintah admin di bastion:
+
+   | Perintah | Fungsi |
+   |---|---|
+   | `create-user <username>` | Membuat akun; password diminta secara tersembunyi |
+   | `change-password <username>` | Mengganti password |
+   | `list-users` | Melihat daftar akun |
+   | `delete-user <username>` | Menghapus akun |
+   | `dbshell` | Membuka MariaDB untuk administrasi |
+
+Contoh menjalankan perintah tanpa membuka shell interaktif:
+
+```sh
+ssh -t -p 2222 -i bastion_key root@localhost create-user budi
+```
+
+Username harus 3–50 karakter (huruf, angka, titik, underscore, atau strip), dan password minimal 8 karakter. Password disimpan sebagai hash bcrypt. Gunakan `ssh -t` untuk perintah yang meminta password melalui terminal.
+
+## API dan real-time
+
+Endpoint switch memerlukan JWT. Login melalui `POST /api/auth/login`, lalu kirim token pada header `Authorization: Bearer <token>` saat memanggil endpoint switch. Koneksi Socket.IO juga harus mengirim token melalui `auth.token`.
+
+| Endpoint | Fungsi |
 |---|---|
-| `create-user <username>` | buat user baru |
-| `change-password <username>` | ganti password |
-| `list-users` / `delete-user <username>` | lihat / hapus user |
-| `dbshell` | masuk MariaDB (`SELECT * FROM users;`, dll.) |
+| `GET /api/health` | Memeriksa bahwa backend berjalan |
+| `POST /api/auth/login` | Login dan mendapatkan JWT |
+| `GET /api/switches/current` | Snapshot port terbaru |
+| `GET /api/switches/events?limit=50` | Kejadian terbaru; batas maksimum 500 |
+| `GET /api/switches/events?from=<ISO>&to=<ISO>` | Kejadian dalam rentang waktu |
+| `GET /api/switches/:id/logs?interface=ether1&limit=100` | Histori snapshot port; batas maksimum 1000 |
 
-Gunakan `ssh -t` bila menjalankan perintah langsung, mis. `ssh -t -p 2222 -i bastion_key root@localhost create-user budi`.
-Port SSH hanya di-bind ke `127.0.0.1` (ubah `BASTION_BIND` di `.env` bila admin perlu SSH dari jaringan).
-Port MariaDB **tidak dibuka** ke host; akses DB lewat `dbshell`.
+Socket.IO mengirim event `ports:update`, `ports:error`, dan `events:new`. Login dibatasi 20 percobaan per IP setiap 15 menit. Token kedaluwarsa mengikuti `JWT_EXPIRES_IN`.
 
-**Akses langsung lewat IP container (`10.10.10.40`)** — untuk debug/remote dari dalam server, tanpa lewat port yang dipetakan ke host:
+## Data dan kompatibilitas MikroTik
 
-```
-ssh -p 22 -i bastion_key root@10.10.10.40
-```
+- Skema tabel aplikasi dibuat oleh backend saat start. `db/init.sql` dijalankan MariaDB saat volume data pertama kali dibuat; perubahan pada file itu tidak diterapkan ulang ke database yang sudah ada. Backend memastikan tabel yang diperlukannya tersedia.
+- Baris switch pertama diselaraskan dengan `MIKROTIK_HOST` dan `MIKROTIK_API_PORT` dari `.env`.
+- Status dan traffic dipoll setiap `POLL_INTERVAL_MS`. Snapshot histori port dan perangkat disimpan berdasarkan `LOG_INTERVAL_MS`; log yang lebih lama dari `LOG_RETENTION_DAYS` dihapus otomatis.
+- Peristiwa perubahan status ON/OFF dan switch yang terputus/tersambung dicatat di `port_events` dan dikirim ke dashboard.
+- Dukungan PoE ditentukan dari port yang muncul di `/interface/ethernet/poe/print`.
+- Perangkat terhubung dipetakan dari `/interface/bridge/host/print`; nama perangkat dicari dari DHCP lease (`host-name`, lalu `comment`). Tanpa lease yang cocok, nama dapat tampil sebagai “Unknown device”.
+- Port `ether1` ditampilkan sebagai sumber internet, dengan MAC address tetangga jika RouterOS melaporkannya.
+- Perangkat harus menyediakan RouterOS API. Perangkat yang berjalan dalam mode SwOS saja, seperti beberapa model CSS, tidak menyediakan API RouterOS yang digunakan aplikasi ini.
 
-Catatan: IP ini hanya bisa dijangkau dari **dalam jaringan Docker yang sama** (mis. dari container lain, atau dari host bila Docker berjalan native di Linux). Bila Docker Desktop berjalan di **Windows/Mac**, IP ini **tidak bisa diakses langsung dari komputer itu sendiri** karena Docker berjalan di dalam VM tersembunyi — tetap gunakan `localhost:2222` di atas. Untuk akses dari komputer *lain* di LAN, ubah `BASTION_BIND=0.0.0.0` di `.env`, bukan lewat IP container ini.
+## Pengembangan dan produksi
 
-## Alur data & log
+Compose menjalankan React Create React App development server (`npm start`) dan memasang dependency saat container start. Ini cocok untuk pengembangan dan deployment internal sederhana, bukan konfigurasi produksi yang dioptimalkan. Untuk produksi, buat bundle frontend dengan `npm run build` di direktori `frontend`, sajikan `frontend/build` melalui web server produksi, dan tinjau TLS, firewall, rahasia, serta kebijakan akses sebelum mengekspos layanan ke jaringan.
 
-- Backend polling switch tiap `POLL_INTERVAL_MS` (5 dtk) → siarkan ke browser via event `ports:update`.
-- Tabel `port_logs` + `connected_devices`: snapshot histori tiap `LOG_INTERVAL_MS` (60 dtk).
-- Tabel `port_events`: dicatat saat port berubah ON↔OFF atau switch tidak terjangkau → tampil real-time di panel
-  **Log Real-time** (riwayat awal dari DB, event baru via `events:new`).
-- Log lebih tua dari `LOG_RETENTION_DAYS` (7 hari) dihapus otomatis.
-- Skema tabel dibuat otomatis oleh backend saat start (`CREATE TABLE IF NOT EXISTS`); tabel `switches` disinkronkan dengan `.env`.
-- API histori: `GET /api/switches/:id/logs?interface=ether1&limit=100`, `GET /api/switches/events`.
-
-## Asumsi yang perlu dicek pada perangkat Anda
-
-- **PoE**: port dianggap mendukung PoE bila muncul di `/interface/ethernet/poe/print`.
-- **Device terhubung**: dari `/interface/bridge/host/print` (MAC↔port); nama dari `/ip/dhcp-server/lease/print`
-  (`host-name`, fallback `comment`). Jika switch bukan DHCP server, nama tampil "Unknown device" (MAC tetap tampil).
-- Switch mode SwOS (mis. CSS3xx/CSS610 di SwOS) **tidak punya RouterOS API**; harus RouterOS (CRS/CSS di RouterOS mode).
-- Frontend memakai dev server CRA (hot-reload). Untuk produksi murni, ganti `command` frontend dengan `npm run build`
-  lalu sajikan folder `build/` (mis. `npx serve -s build -l 3000`).
-
-## Keamanan singkat
-
-Jangan commit `.env` atau private key (`bastion_key`, `ssh_host_*_key`) — sudah di `.gitignore`. Login dibatasi
-20 percobaan / 15 menit per IP; JWT kadaluarsa sesuai `JWT_EXPIRES_IN`.
+Jangan commit `.env`, private key `bastion_key`, atau SSH host private key. Simpan file-file tersebut dengan izin yang sesuai; gunakan `.env.example` hanya sebagai template, bukan konfigurasi operasional.
